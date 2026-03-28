@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  WAITER
+}
+
+enum OrderStatus {
+  OPEN
+  CLOSED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+}
+
+enum PrinterScope {
+  BAR
+  KITCHEN
+  GRILL
+  PRECHECK
+  REPORT
+}
+
+enum Station {
+  BAR
+  KITCHEN
+  GRILL
+}
+
+model Department {
+  id         String     @id
+  name       String
+  sortOrder  Int
+  categories Category[]
+  updatedAt  DateTime   @updatedAt
+  createdAt  DateTime   @default(now())
+}
+
+model Zone {
+  id        String            @id
+  name      String
+  tables    RestaurantTable[]
+  updatedAt DateTime          @updatedAt
+  createdAt DateTime          @default(now())
+}
+
+model RestaurantTable {
+  id        String   @id
+  name      String
+  seats     Int
+  zoneId    String
+  zone      Zone     @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  orders    Order[]
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model Category {
+  id           String     @id
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  name         String
+  color        String
+  sortOrder    Int
+  menuItems    MenuItem[]
+  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime   @default(now())
+}
+
+model MenuItem {
+  id          String      @id
+  categoryId  String
+  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  sku         String?
+  priceCents  Int
+  unit        String
+  sortOrder   Int         @default(0)
+  station     Station
+  available   Boolean     @default(true)
+  orderItems  OrderItem[]
+  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime    @default(now())
+}
+
+model Printer {
+  id        String       @id
+  name      String
+  ipAddress String
+  scope     PrinterScope
+  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now())
+}
+
+model User {
+  id        String   @id
+  name      String
+  role      Role
+  pin       String
+  orders    Order[]
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id                String         @id
+  tableId           String
+  waiterId          String
+  table             RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  waiter            User           @relation(fields: [waiterId], references: [id], onDelete: Restrict)
+  status            OrderStatus
+  paymentMethod     PaymentMethod?
+  precheckPrintedAt DateTime?
+  totalCents        Int
+  syncedAt          DateTime?
+  orderItems        OrderItem[]
+  updatedAt         DateTime
+  createdAt         DateTime
+}
+
+model OrderItem {
+  id         String   @id
+  orderId    String
+  menuItemId String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  quantity   Int
+  priceCents Int
+  note       String?
+  updatedAt  DateTime
+  createdAt  DateTime
+}
