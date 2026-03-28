@@ -1,6 +1,8 @@
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
-import Fastify from "fastify";
+import Fastify, { FastifyReply } from "fastify";
+import { Prisma } from "@prisma/client";
+import { ZodError } from "zod";
 import {
   authSchema,
   menuUpdateSchema,
@@ -9,16 +11,54 @@ import {
   syncOperationSchema,
   userUpdateSchema,
 } from "./contracts";
-import { applyOrderOperation } from "./orderSync";
+import { applyOrderOperation, SyncConflictError } from "./orderSync";
 import { loadBootstrap } from "./catalog";
 import { broadcast, registerSocket } from "./broadcast";
 import { prisma } from "./prisma";
+
+const sendApiError = (
+  reply: FastifyReply,
+  error: unknown,
+  fallbackMessage: string,
+) => {
+  if (error instanceof ZodError) {
+    return reply.status(400).send({
+      message: "Invalid request payload",
+      issues: error.issues,
+    });
+  }
+
+  if (error instanceof SyncConflictError) {
+    return reply.status(409).send({
+      message: error.message,
+    });
+  }
+
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+    return reply.status(409).send({
+      message: "Referenced entity does not exist",
+      code: error.code,
+    });
+  }
+
+  if (error instanceof Error) {
+    return reply.status(500).send({
+      message: error.message || fallbackMessage,
+    });
+  }
+
+  return reply.status(500).send({
+    message: fallbackMessage,
+  });
+};
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
 
   app.register(cors, {
     origin: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   });
 
   app.register(websocket);
@@ -47,51 +87,61 @@ export const buildApp = () => {
     };
   });
 
-  app.post("/api/orders/sync", async (request) => {
-    const body = syncEnvelopeSchema.parse(request.body);
+  app.post("/api/orders/sync", async (request, reply) => {
+    try {
+      const body = syncEnvelopeSchema.parse(request.body);
 
-    for (const operation of body.operations) {
-      await applyOrderOperation(syncOperationSchema.parse(operation));
+      for (const operation of body.operations) {
+        await applyOrderOperation(syncOperationSchema.parse(operation));
+      }
+
+      return {
+        ok: true,
+        count: body.operations.length,
+      };
+    } catch (error) {
+      request.log.error(error, "Failed to apply order sync operations");
+      return sendApiError(reply, error, "Failed to sync orders");
     }
-
-    return {
-      ok: true,
-      count: body.operations.length,
-    };
   });
 
-  app.put("/api/catalog/menu", async (request) => {
-    const body = menuUpdateSchema.parse(request.body);
+  app.put("/api/catalog/menu", async (request, reply) => {
+    try {
+      const body = menuUpdateSchema.parse(request.body);
 
-    await prisma.$transaction(async (tx) => {
-      await tx.menuItem.deleteMany();
-      await tx.category.deleteMany();
-      await tx.department.deleteMany();
+      await prisma.$transaction(async (tx) => {
+        await tx.menuItem.deleteMany();
+        await tx.category.deleteMany();
+        await tx.department.deleteMany();
 
-      await tx.department.createMany({
-        data: body.departments,
+        await tx.department.createMany({
+          data: body.departments,
+        });
+
+        await tx.category.createMany({
+          data: body.categories,
+        });
+
+        await tx.menuItem.createMany({
+          data: body.menuItems,
+        });
       });
 
-      await tx.category.createMany({
-        data: body.categories,
+      const bootstrap = await loadBootstrap();
+      broadcast({
+        type: "MENU_UPDATED",
+        payload: {
+          departments: bootstrap.departments,
+          categories: bootstrap.categories,
+          menuItems: bootstrap.menuItems,
+        },
       });
 
-      await tx.menuItem.createMany({
-        data: body.menuItems,
-      });
-    });
-
-    const bootstrap = await loadBootstrap();
-    broadcast({
-      type: "MENU_UPDATED",
-      payload: {
-        departments: bootstrap.departments,
-        categories: bootstrap.categories,
-        menuItems: bootstrap.menuItems,
-      },
-    });
-
-    return bootstrap;
+      return bootstrap;
+    } catch (error) {
+      request.log.error(error, "Failed to save menu catalog");
+      return sendApiError(reply, error, "Failed to save menu");
+    }
   });
 
   app.put("/api/printers", async (request) => {

@@ -3,6 +3,10 @@ import { z } from "zod";
 import { orderSchema, orderItemSchema } from "./contracts";
 import { prisma } from "./prisma";
 
+const legacyMenuItemIdMap: Record<string, string> = {
+  "menu-salad": "menu-burger",
+};
+
 const operationSchema = z.object({
   order: orderSchema,
   items: z.array(orderItemSchema),
@@ -14,8 +18,54 @@ type SyncOperation = z.infer<typeof operationSchema>;
 const toPaymentMethod = (value?: string) =>
   value ? (value as PaymentMethod) : undefined;
 
+const normalizeMenuItemId = (menuItemId: string) =>
+  legacyMenuItemIdMap[menuItemId] ?? menuItemId;
+
+export class SyncConflictError extends Error {}
+
 export const applyOrderOperation = async (operation: SyncOperation) => {
   const parsed = operationSchema.parse(operation);
+  const normalizedItems = parsed.items.map((item) => ({
+    ...item,
+    menuItemId: normalizeMenuItemId(item.menuItemId),
+  }));
+  const menuItemIds = [...new Set(normalizedItems.map((item) => item.menuItemId))];
+
+  const [table, waiter, menuItems] = await Promise.all([
+    prisma.restaurantTable.findUnique({
+      where: { id: parsed.order.tableId },
+      select: { id: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: parsed.order.waiterId },
+      select: { id: true },
+    }),
+    menuItemIds.length > 0
+      ? prisma.menuItem.findMany({
+          where: {
+            id: {
+              in: menuItemIds,
+            },
+          },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  if (!table) {
+    throw new SyncConflictError(`Unknown tableId: ${parsed.order.tableId}`);
+  }
+
+  if (!waiter) {
+    throw new SyncConflictError(`Unknown waiterId: ${parsed.order.waiterId}`);
+  }
+
+  const existingMenuItemIds = new Set(menuItems.map((item) => item.id));
+  const missingMenuItemId = menuItemIds.find((menuItemId) => !existingMenuItemIds.has(menuItemId));
+
+  if (missingMenuItemId) {
+    throw new SyncConflictError(`Unknown menuItemId: ${missingMenuItemId}`);
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.order.upsert({
@@ -56,7 +106,7 @@ export const applyOrderOperation = async (operation: SyncOperation) => {
 
     if (parsed.items.length > 0) {
       await tx.orderItem.createMany({
-        data: parsed.items.map((item) => ({
+        data: normalizedItems.map((item) => ({
           id: item.id,
           orderId: item.orderId,
           menuItemId: item.menuItemId,
