@@ -1,5 +1,17 @@
 import { prisma } from "./prisma";
 
+const normalizeZoneName = (id: string, fallback: string) => {
+  if (id === "zone-main") {
+    return "Зал";
+  }
+
+  if (id === "zone-terrace") {
+    return "Улица";
+  }
+
+  return fallback;
+};
+
 export const loadBootstrap = async () => {
   const [departments, categories, menuItems, printers, tables, users, zones] = await Promise.all([
     prisma.department.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -62,7 +74,7 @@ export const loadBootstrap = async () => {
     })),
     zones: zones.map((item) => ({
       id: item.id,
-      name: item.name,
+      name: normalizeZoneName(item.id, item.name),
       updatedAt: item.updatedAt.toISOString(),
     })),
   };

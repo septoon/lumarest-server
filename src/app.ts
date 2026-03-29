@@ -16,6 +16,8 @@ import { loadBootstrap } from "./catalog";
 import { broadcast, registerSocket } from "./broadcast";
 import { prisma } from "./prisma";
 
+class CatalogConflictError extends Error {}
+
 const sendApiError = (
   reply: FastifyReply,
   error: unknown,
@@ -29,6 +31,12 @@ const sendApiError = (
   }
 
   if (error instanceof SyncConflictError) {
+    return reply.status(409).send({
+      message: error.message,
+    });
+  }
+
+  if (error instanceof CatalogConflictError) {
     return reply.status(409).send({
       message: error.message,
     });
@@ -110,21 +118,123 @@ export const buildApp = () => {
       const body = menuUpdateSchema.parse(request.body);
 
       await prisma.$transaction(async (tx) => {
-        await tx.menuItem.deleteMany();
-        await tx.category.deleteMany();
-        await tx.department.deleteMany();
+        const incomingDepartmentIds = new Set(body.departments.map((department) => department.id));
+        const incomingCategoryIds = new Set(body.categories.map((category) => category.id));
+        const incomingMenuItemIds = new Set(body.menuItems.map((menuItem) => menuItem.id));
 
-        await tx.department.createMany({
-          data: body.departments,
+        const existingMenuItems = await tx.menuItem.findMany({
+          select: { id: true },
         });
+        const removableMenuItemIds = existingMenuItems
+          .map((item) => item.id)
+          .filter((id) => !incomingMenuItemIds.has(id));
 
-        await tx.category.createMany({
-          data: body.categories,
-        });
+        const referencedRemovedMenuItems =
+          removableMenuItemIds.length > 0
+            ? await tx.orderItem.findMany({
+                where: {
+                  menuItemId: {
+                    in: removableMenuItemIds,
+                  },
+                },
+                select: { menuItemId: true },
+                distinct: ["menuItemId"],
+              })
+            : [];
 
-        await tx.menuItem.createMany({
-          data: body.menuItems,
+        if (referencedRemovedMenuItems.length > 0) {
+          throw new CatalogConflictError(
+            `Нельзя удалить блюда, которые уже используются в заказах: ${referencedRemovedMenuItems
+              .map((item) => item.menuItemId)
+              .join(", ")}`,
+          );
+        }
+
+        for (const department of body.departments) {
+          await tx.department.upsert({
+            where: { id: department.id },
+            update: {
+              name: department.name,
+              sortOrder: department.sortOrder,
+            },
+            create: department,
+          });
+        }
+
+        for (const category of body.categories) {
+          await tx.category.upsert({
+            where: { id: category.id },
+            update: {
+              departmentId: category.departmentId,
+              name: category.name,
+              color: category.color,
+              sortOrder: category.sortOrder,
+            },
+            create: category,
+          });
+        }
+
+        for (const menuItem of body.menuItems) {
+          await tx.menuItem.upsert({
+            where: { id: menuItem.id },
+            update: {
+              categoryId: menuItem.categoryId,
+              name: menuItem.name,
+              description: menuItem.description,
+              sku: menuItem.sku,
+              priceCents: menuItem.priceCents,
+              unit: menuItem.unit,
+              sortOrder: menuItem.sortOrder,
+              station: menuItem.station,
+              available: menuItem.available,
+            },
+            create: menuItem,
+          });
+        }
+
+        if (removableMenuItemIds.length > 0) {
+          await tx.menuItem.deleteMany({
+            where: {
+              id: {
+                in: removableMenuItemIds,
+              },
+            },
+          });
+        }
+
+        const existingCategories = await tx.category.findMany({
+          select: { id: true },
         });
+        const removableCategoryIds = existingCategories
+          .map((category) => category.id)
+          .filter((id) => !incomingCategoryIds.has(id));
+
+        if (removableCategoryIds.length > 0) {
+          await tx.category.deleteMany({
+            where: {
+              id: {
+                in: removableCategoryIds,
+              },
+            },
+          });
+        }
+
+        const existingDepartments = await tx.department.findMany({
+          select: { id: true },
+        });
+        const removableDepartmentIds = existingDepartments
+          .map((department) => department.id)
+          .filter((id) => !incomingDepartmentIds.has(id));
+
+        if (removableDepartmentIds.length > 0) {
+          await tx.department.deleteMany({
+            where: {
+              id: {
+                in: removableDepartmentIds,
+              },
+            },
+          });
+        }
       });
 
       const bootstrap = await loadBootstrap();

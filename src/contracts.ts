@@ -65,6 +65,13 @@ export const departmentInputSchema = z.object({
   sortOrder: z.number().int(),
 });
 
+export const measurementUnitSchema = z.enum([
+  "штуки",
+  "литры",
+  "граммы",
+  "килограммы",
+]);
+
 export const menuItemInputSchema = z.object({
   id: z.string(),
   categoryId: z.string(),
@@ -72,7 +79,7 @@ export const menuItemInputSchema = z.object({
   description: z.string().optional(),
   sku: z.string().optional(),
   priceCents: z.number().int().nonnegative(),
-  unit: z.string(),
+  unit: measurementUnitSchema,
   sortOrder: z.number().int(),
   station: z.enum(["BAR", "KITCHEN", "GRILL"]),
   available: z.boolean(),
