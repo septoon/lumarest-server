@@ -22,6 +22,12 @@ enum PaymentMethod {
   CARD
 }
 
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
 enum PrinterScope {
   BAR
   KITCHEN
@@ -118,6 +124,7 @@ model Order {
   waiterId          String
   table             RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Restrict)
   waiter            User           @relation(fields: [waiterId], references: [id], onDelete: Restrict)
+  orderType         OrderType      @default(DINE_IN)
   status            OrderStatus
   paymentMethod     PaymentMethod?
   precheckPrintedAt DateTime?
@@ -134,7 +141,7 @@ model OrderItem {
   menuItemId String
   order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
-  quantity   Int
+  quantity   Decimal  @db.Decimal(10, 3)
   priceCents Int
   note       String?
   updatedAt  DateTime

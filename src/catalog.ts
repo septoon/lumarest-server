@@ -12,6 +12,14 @@ const normalizeZoneName = (id: string, fallback: string) => {
   return fallback;
 };
 
+const normalizeUserName = (id: string, fallback: string) => {
+  if (id === "user-admin") {
+    return "Виктория";
+  }
+
+  return fallback;
+};
+
 export const loadBootstrap = async () => {
   const [departments, categories, menuItems, printers, tables, users, zones] = await Promise.all([
     prisma.department.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -67,7 +75,7 @@ export const loadBootstrap = async () => {
     })),
     users: users.map((item) => ({
       id: item.id,
-      name: item.name,
+      name: normalizeUserName(item.id, item.name),
       role: item.role,
       pin: item.pin,
       updatedAt: item.updatedAt.toISOString(),

@@ -198,7 +198,7 @@ async function main() {
     data: [
       {
         id: "user-admin",
-        name: "Administrator",
+        name: "Виктория",
         role: Role.ADMIN,
         pin: adminPin,
         createdAt: now,

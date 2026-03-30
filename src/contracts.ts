@@ -3,6 +3,7 @@ import { z } from "zod";
 export const roleSchema = z.enum(["ADMIN", "WAITER"]);
 export const orderStatusSchema = z.enum(["OPEN", "CLOSED"]);
 export const paymentMethodSchema = z.enum(["CASH", "CARD"]);
+export const orderTypeSchema = z.enum(["DINE_IN", "TAKEAWAY", "DELIVERY"]);
 export const syncOperationTypeSchema = z.enum([
   "ORDER_CREATED",
   "ORDER_UPDATED",
@@ -16,7 +17,7 @@ export const orderItemSchema = z.object({
   id: z.string(),
   orderId: z.string(),
   menuItemId: z.string(),
-  quantity: z.number().int().positive(),
+  quantity: z.number().positive(),
   priceCents: z.number().int().nonnegative(),
   note: z.string().optional(),
   createdAt: z.string(),
@@ -27,6 +28,7 @@ export const orderSchema = z.object({
   id: z.string(),
   tableId: z.string(),
   waiterId: z.string(),
+  orderType: orderTypeSchema.optional(),
   status: orderStatusSchema,
   paymentMethod: paymentMethodSchema.optional(),
   precheckPrintedAt: z.string().optional(),
